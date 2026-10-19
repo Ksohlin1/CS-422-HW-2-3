@@ -264,7 +264,7 @@ def connect(ipAdress):
 
 
         #tell server we are done by sending TEST_END which is state #4:
-        #We then read until we get the state change acknlowedgement to EXCHANGE_RESULTS (#5):
+        #We then read until we get the state change acknlowedgement to EXCHANGE_RESULTS (#13):
         #finally return results once gathered
         try:
             sock.sendall((4).to_bytes(1, byteorder='big'))
@@ -443,6 +443,15 @@ def Q1c_parse_and_plot(results):
     # Export the plot
     plt.savefig("throughput_over_time.pdf")
     print("\nPlot saved to throughput_over_time.pdf")
+
+
+
+
+
+
+
+
+
 
 
 def Q2_parse_plot(results):
