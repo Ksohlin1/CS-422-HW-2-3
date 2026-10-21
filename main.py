@@ -24,6 +24,8 @@ if __name__ == "__main__":
                         help="seconds between goodput/TCP_INFO samples (default: %(default)s)")
     parser.add_argument("--timeout", type=float, default=10,
                         help="seconds to wait for a connection or a server reply (default: %(default)s)")
+    parser.add_argument("--representative", metavar="IP[:PORT]",
+                        help="destination to plot for Q2(b) (default: the one with the median mean goodput)")
     args = parser.parse_args()
 
     if args.max_attempts is None:
@@ -53,4 +55,5 @@ if __name__ == "__main__":
         test_time=args.duration,
         interval=args.interval,
         timeout_time=args.timeout,
+        representative=args.representative,
     )

@@ -17,11 +17,11 @@ FAIL = (3562835652).to_bytes(10, byteorder='big')
 
 
 
-def runHW2Q1And2(serverList, n, max_attempts, test_time, interval, timeout_time):
+def runHW2Q1And2(serverList, n, max_attempts, test_time, interval, timeout_time, representative=None):
     #part 1:
     results = connectN(serverList, n, max_attempts, test_time, interval, timeout_time)
     Q1c_parse_and_plot(results)
-    Q2_parse_plot_modified(results, interval)
+    Q2_parse_plot_modified(results, interval, representative)
 
 
 
@@ -390,16 +390,17 @@ def Q1c_parse_and_plot(results):
         axes = [axes]
         
     # Print the summary table header
-    print(f"\n{'Destination':<22} | {'Min (Mbps)':<12} | {'Median (Mbps)':<13} | {'Mean (Mbps)':<12} | {'95th Pct (Mbps)':<15}")
-    print("-" * 83)
+    print(f"\n{'Destination':<22} | {'Algorithm':<10} | {'Min (Mbps)':<12} | {'Median (Mbps)':<13} | {'Mean (Mbps)':<12} | {'95th Pct (Mbps)':<15}")
+    print("-" * 96)
+    summary_rows = []  # also saved to q1_summary.csv for the report
     
     for i, (ip, port, output) in enumerate(results):
-        json_bytes, records, _ = output
+        json_bytes, records, algo = output
         destination = f"{ip}:{port}"
         
         # Handle edge case where a test completed but no throughput records were polled
         if not records:
-            print(f"{destination:<22} | {'N/A':<12} | {'N/A':<13} | {'N/A':<12} | {'N/A':<15}")
+            print(f"{destination:<22} | {algo:<10} | {'N/A':<12} | {'N/A':<13} | {'N/A':<12} | {'N/A':<15}")
             continue
             
         # Extract times and convert goodput from bps to Mbps
@@ -413,7 +414,8 @@ def Q1c_parse_and_plot(results):
         pct_95 = np.percentile(goodputs_mbps, 95)
         
         # Print row for this destination
-        print(f"{destination:<22} | {min_val:<12.2f} | {median_val:<13.2f} | {mean_val:<12.2f} | {pct_95:<15.2f}")
+        print(f"{destination:<22} | {algo:<10} | {min_val:<12.2f} | {median_val:<13.2f} | {mean_val:<12.2f} | {pct_95:<15.2f}")
+        summary_rows.append([ip, port, algo, f"{min_val:.2f}", f"{median_val:.2f}", f"{mean_val:.2f}", f"{pct_95:.2f}"])
         
         # Plot the data on its specific subplot panel
         axes[i].plot(times, goodputs_mbps, marker='o', linestyle='-', markersize=3, label="Goodput")
@@ -421,6 +423,12 @@ def Q1c_parse_and_plot(results):
         axes[i].set_ylabel("Goodput (Mbps)")
         axes[i].grid(True, linestyle='--', alpha=0.7)
     
+    with open("q1_summary.csv", "w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(["destination_ip", "port", "algorithm", "min_mbps", "median_mbps", "mean_mbps", "p95_mbps"])
+        writer.writerows(summary_rows)
+    print("\nSummary table saved to q1_summary.csv")
+
     # Format the overall plot
     axes[-1].set_xlabel("Time (seconds)")
     plt.tight_layout()
@@ -610,7 +618,7 @@ def Q2_parse_plot(results):
 
 
 from matplotlib.backends.backend_pdf import PdfPages
-def Q2_parse_plot_modified(results, interval):
+def Q2_parse_plot_modified(results, interval, representative=None):
     if not results:
         print("No successful results to parse and plot for Q2.")
         return
@@ -693,13 +701,25 @@ def Q2_parse_plot_modified(results, interval):
 
     print(f"Q2 measurements saved to {csv_filename} and {json_filename} (Algorithm: {cc_algo}, Run ID: {run_id})")
 
-    # 3. Part 2(b): Plot all destinations into a single multi-page PDF
+    # 3. Part 2(b): Plot a representative destination: the one given (IP or IP:PORT), otherwise
+    # the one with the median mean goodput, i.e. a typical path rather than an outlier
+    runs = [run for run in all_runs_json if run["samples"]]
+    if not runs:
+        print("No valid sample records found to plot for Q2.")
+        return
+    rep_runs = [run for run in runs if representative in (run["destination"], f"{run['destination']}:{run['port']}")]
+    if representative and not rep_runs:
+        print(f"Warning: representative {representative} was not tested successfully, choosing one instead")
+    if not rep_runs:
+        runs.sort(key=lambda run: np.mean([s["goodput_mbps"] for s in run["samples"]]))
+        rep_runs = [runs[len(runs) // 2]]
+    print(f"Representative destination: {rep_runs[0]['destination']}:{rep_runs[0]['port']}")
+
     pdf_filename = "Q2.pdf"
 
-    # Keep one PdfPages context open for ALL destinations.
     with PdfPages(pdf_filename) as pdf:
 
-        for run in all_runs_json:
+        for run in rep_runs:
             samples = run["samples"]
 
             # Skip destinations without valid samples
@@ -846,7 +866,7 @@ def Q2_parse_plot_modified(results, interval):
             plt.close(fig_sc)
 
     print(
-        f"Successfully saved all Q2 plots into multi-page PDF: "
+        f"Successfully saved Q2 plots into multi-page PDF: "
         f"{pdf_filename}"
     )
 
