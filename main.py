@@ -1,6 +1,6 @@
 import argparse
 import socket_program as sp
-from fetch_servers import fetch_ips
+from fetch_servers import fetch_servers
 
 if __name__ == "__main__":
     """
@@ -13,7 +13,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="Run iperf3-compatible TCP tests against random public iperf3 servers (HW 2, Q1 and Q2)."
     )
-    parser.add_argument("path", help="JSON or CSV file listing the servers to measure")
+    parser.add_argument("path", help="JSON or CSV server list with IP/HOST and PORT columns")
     parser.add_argument("-n", "--num-servers", type=int, default=10,
                         help="number of servers to test successfully (default: %(default)s)")
     parser.add_argument("--max-attempts", type=int,
@@ -38,14 +38,16 @@ if __name__ == "__main__":
         parser.error("--timeout must be positive")
 
 
-    #Uses assignment 1 script to get list of ips from input file
+    #Uses assignment 1 script to get (ip, [ports]) for every server in the input file
     try:
-        ip_list = fetch_ips(args.path)
+        server_list = fetch_servers(args.path)
     except (OSError, ValueError) as exc:
         raise SystemExit(f"error: {exc}")
+    if not server_list:
+        raise SystemExit(f"error: no addresses resolved from {args.path}")
 
     sp.runHW2Q1And2(
-        iplist=ip_list,
+        serverList=server_list,
         n=args.num_servers,
         max_attempts=args.max_attempts,
         test_time=args.duration,

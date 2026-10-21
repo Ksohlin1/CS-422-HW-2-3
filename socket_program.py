@@ -17,9 +17,9 @@ FAIL = (3562835652).to_bytes(10, byteorder='big')
 
 
 
-def runHW2Q1And2(iplist, n, max_attempts, test_time, interval, timeout_time):
+def runHW2Q1And2(serverList, n, max_attempts, test_time, interval, timeout_time):
     #part 1:
-    results = connectN(iplist, n, max_attempts, test_time, interval, timeout_time)
+    results = connectN(serverList, n, max_attempts, test_time, interval, timeout_time)
     Q1c_parse_and_plot(results)
     Q2_parse_plot_modified(results, interval)
 
@@ -29,16 +29,17 @@ def runHW2Q1And2(iplist, n, max_attempts, test_time, interval, timeout_time):
 
 
 '''
-Keeps track of tried ips, number of attempts
-Tries connecting and testing unique ips until either n tests succeed or we reach the max attempts
-returns a list where each entry is (IP_Adress, (Touple of Results from Connect)) = (IP, (JSON Test Output, List of touples: (Time from start, goodput)))
+Keeps track of tried servers, number of attempts
+serverList is a list of (ip, [ports]) from fetch_servers; each attempt uses one random port of that server
+Tries connecting and testing unique servers until either n tests succeed or we reach the max attempts
+returns a list where each entry is (IP_Adress, port, (Tuple of Results from Connect)) = (IP, port, (JSON Test Output, List of tuples: (Time from start, goodput, snd_cwnd, rtt, loss signal)))
 '''
-def connectN(ipList, n, max_attempts, test_time, interval, timeout_time):
+def connectN(serverList, n, max_attempts, test_time, interval, timeout_time):
     valid_outputs = 0
     attempt = 0
 
     results = list()
-    length = len(ipList)
+    length = len(serverList)
 
     #index of attempted ips
     attempted = list()
@@ -58,16 +59,20 @@ def connectN(ipList, n, max_attempts, test_time, interval, timeout_time):
             continue
         attempted.append(rand_index)
 
-        print("attempting test on " + ipList[rand_index])
-        output = connect(ipList[rand_index], test_time, interval, timeout_time)
+        #Servers often listen on a range of ports (e.g. 5201-5209); pick one at random
+        ip, ports = serverList[rand_index]
+        port = random.choice(ports)
+
+        print(f"attempting test on {ip}:{port}")
+        output = connect(ip, port, test_time, interval, timeout_time)
         attempt += 1
         if output[0] == FAIL:
-            print("IP Adress " + ipList[rand_index] + " Failed. Trying another")
+            print(f"{ip}:{port} Failed. Trying another")
             continue
 
         #if didnt fail:
-        print("IP Adress " + ipList[rand_index] + " Succeeded.")
-        results.append((ipList[rand_index], output))
+        print(f"{ip}:{port} Succeeded.")
+        results.append((ip, port, output))
         valid_outputs +=1
     return results
 
@@ -76,8 +81,7 @@ def connectN(ipList, n, max_attempts, test_time, interval, timeout_time):
 
 
 '''
-* Takes in one specific IP to connect to
-* Assumes a standard port that iperf3 uses
+* Takes in one specific IP and port to connect to (the port the server list advertises)
 * creates one socket, this first socket is the control channel which we use to configure our test and "control" what happens
     * Once the socket is created and connected, we configure the test infortmation in a JSON string and send it to the server
     * We wait for an acknowledgement that the server is ready for the test
@@ -89,8 +93,7 @@ def connectN(ipList, n, max_attempts, test_time, interval, timeout_time):
 *upon success returns a tuple with the first index being the JSON output, and the second index being the throughput from the thread function
 *   i.e (Json, list from throughput function)
 '''
-def connect(ipAdress, test_time, interval, timeout_time):
-    port = 5201 #assumed standard port for iperf3
+def connect(ipAdress, port, test_time, interval, timeout_time):
     #test_time: length of test in seconds
     #interval: seconds between throughput samples
     #timeout_time: max time wait before timing out
@@ -407,15 +410,16 @@ def Q1c_parse_and_plot(results):
         axes = [axes]
         
     # Print the summary table header
-    print(f"\n{'IP Address':<18} | {'Min (Mbps)':<12} | {'Median (Mbps)':<13} | {'Mean (Mbps)':<12} | {'95th Pct (Mbps)':<15}")
-    print("-" * 79)
+    print(f"\n{'Destination':<22} | {'Min (Mbps)':<12} | {'Median (Mbps)':<13} | {'Mean (Mbps)':<12} | {'95th Pct (Mbps)':<15}")
+    print("-" * 83)
     
-    for i, (ip, output) in enumerate(results):
+    for i, (ip, port, output) in enumerate(results):
         json_bytes, records = output
+        destination = f"{ip}:{port}"
         
         # Handle edge case where a test completed but no throughput records were polled
         if not records:
-            print(f"{ip:<18} | {'N/A':<12} | {'N/A':<13} | {'N/A':<12} | {'N/A':<15}")
+            print(f"{destination:<22} | {'N/A':<12} | {'N/A':<13} | {'N/A':<12} | {'N/A':<15}")
             continue
             
         # Extract times and convert goodput from bps to Mbps
@@ -428,12 +432,12 @@ def Q1c_parse_and_plot(results):
         mean_val = np.mean(goodputs_mbps)
         pct_95 = np.percentile(goodputs_mbps, 95)
         
-        # Print row for this IP
-        print(f"{ip:<18} | {min_val:<12.2f} | {median_val:<13.2f} | {mean_val:<12.2f} | {pct_95:<15.2f}")
+        # Print row for this destination
+        print(f"{destination:<22} | {min_val:<12.2f} | {median_val:<13.2f} | {mean_val:<12.2f} | {pct_95:<15.2f}")
         
         # Plot the data on its specific subplot panel
         axes[i].plot(times, goodputs_mbps, marker='o', linestyle='-', markersize=3, label="Goodput")
-        axes[i].set_title(f"Throughput over Time: {ip}")
+        axes[i].set_title(f"Throughput over Time: {destination}")
         axes[i].set_ylabel("Goodput (Mbps)")
         axes[i].grid(True, linestyle='--', alpha=0.7)
     
@@ -650,12 +654,12 @@ def Q2_parse_plot_modified(results, interval):
         writer = csv.writer(csv_file)
         # Write CSV header including metadata and explicit units
         writer.writerow([
-            "run_id", "destination_ip", "algorithm",
+            "run_id", "destination_ip", "port", "algorithm",
             "timestamp_s", "goodput_mbps", "snd_cwnd_segments",
             "rtt_ms", "interval_retrans_pkts", "cumulative_retrans_pkts"
         ])
 
-        for ip, output in results:
+        for ip, port, output in results:
             _, records = output
             if not records:
                 continue
@@ -676,7 +680,7 @@ def Q2_parse_plot_modified(results, interval):
 
                 # Write row to CSV
                 writer.writerow([
-                    run_id, ip, cc_algo,
+                    run_id, ip, port, cc_algo,
                     f"{timestamp_s:.3f}", f"{goodput_mbps:.4f}", snd_cwnd,
                     f"{rtt_ms:.3f}", interval_retrans, total_retrans
                 ])
@@ -694,6 +698,7 @@ def Q2_parse_plot_modified(results, interval):
             all_runs_json.append({
                 "run_id": run_id,
                 "destination": ip,
+                "port": port,
                 "algorithm": cc_algo,
                 "units": {
                     "timestamp": "seconds (s)",
@@ -725,7 +730,7 @@ def Q2_parse_plot_modified(results, interval):
             if not samples:
                 continue
 
-            rep_ip = run["destination"]
+            rep_ip = f"{run['destination']}:{run['port']}"  # shown in the plot titles
 
             # Extract data for this destination
             times = [s["timestamp_s"] for s in samples]
