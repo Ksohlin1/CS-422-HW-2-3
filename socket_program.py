@@ -100,6 +100,7 @@ def connectN(serverList, n, max_attempts, test_time, interval, timeout_time, out
     * Once the socket is created and connected, we configure the test infortmation in a JSON string and send it to the server
     * We wait for an acknowledgement that the server is ready for the test
 * We then create a second socket which connects to the same server and sends the same session cookie, this will be out "test" socket
+    *If an algorithm is given, it is selected on this socket before it connects
     *After we recieve a "ready for test" acknowledgement through the control socket, we start spamming full length messages out of the test socket for test_time seconds
 * We then tell the server the test is finished and recieve the results
 
@@ -108,10 +109,11 @@ def connectN(serverList, n, max_attempts, test_time, interval, timeout_time, out
 * and the third the congestion control algorithm the data socket used
 *   i.e (Json, list from throughput function, algorithm)
 '''
-def connect(ipAdress, port, test_time, interval, timeout_time):
+def connect(ipAdress, port, test_time, interval, timeout_time, algorithm=None):
     #test_time: length of test in seconds
     #interval: seconds between throughput samples
     #timeout_time: max time wait before timing out
+    #algorithm: congestion control to select on the data socket (e.g. "bbr"); None keeps the system default
     session_cookie = "" #session cookie for the connect/test
 
     #socket.socket creates a socket: first parameter is specifying use ipv4, second indicates use TCP
@@ -189,6 +191,13 @@ def connect(ipAdress, port, test_time, interval, timeout_time):
         #time to open second TCP socket using same session cookie which will be used to test
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as test_socket:
             test_socket.settimeout(timeout_time)
+
+            #Q3: select the congestion control algorithm on the data socket before connecting (TCP_CONGESTION is 13 on Linux)
+            if algorithm:
+                try:
+                    test_socket.setsockopt(socket.IPPROTO_TCP, 13, algorithm.encode())
+                except OSError as e:
+                    return (FAIL, f"Failed to select {algorithm}: {e}")
             
             
             #try to connect and send session_cookie identifier, close out if failed
@@ -226,10 +235,11 @@ def connect(ipAdress, port, test_time, interval, timeout_time):
 
             #To satisfy part C we need to spin up a thread and have it sample every `interval` seconds
             throughput_records = []
+            done = threading.Event()  #set once sending stops, so no sample is taken after the transfer ends
             
             poll_thread = threading.Thread(
                 target=poll_throughput, 
-                args=(test_socket, test_time, interval, throughput_records)
+                args=(test_socket, done, interval, throughput_records)
             )
             poll_thread.start()
 
@@ -243,6 +253,8 @@ def connect(ipAdress, port, test_time, interval, timeout_time):
                     bytes_sent += len(to_send)
             except OSError as e:
                 return (FAIL, f"Test Socket data transmission failed: {e}")
+            finally:
+                done.set()
 
             #join thread once test finishes
             poll_thread.join()
@@ -323,19 +335,19 @@ def wait_for_state(sock, expected):
             
 
 '''
-Queries every `interval` seconds
+Queries every `interval` seconds until `done` is set (when the sender stops)
 returns a list of tuples where each entry is (elapsed time, goodput, snd_cwnd, rtt, loss signal,
     rttvar, pacing_rate, bytes_acked, delivery_rate, bytes_sent, bytes_retrans)
 '''
-def poll_throughput(sock, duration, interval, records_list):
+def poll_throughput(sock, done, interval, records_list):
     #off set might need to be changed, 11 works in WSL
     TCP_INFO = 11 
     last_bytes_acked = 0
     last_time = time.time()
     start_time = last_time
     
-    while time.time() - start_time < duration:
-        time.sleep(interval)
+    #wait() returns True as soon as done is set, so a sample is never taken after sending stops
+    while not done.wait(interval):
         
         try:
             # Request 256 bytes (larger than any current TCP_INFO struct).
@@ -457,6 +469,7 @@ def Q1c_parse_and_plot(results, out_dir="."):
     # Export the plot
     plot_pdf = os.path.join(out_dir, "throughput_over_time.pdf")
     plt.savefig(plot_pdf)
+    plt.close(fig)
     print(f"\nPlot saved to {plot_pdf}")
 
 
