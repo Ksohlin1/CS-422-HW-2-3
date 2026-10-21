@@ -26,6 +26,8 @@ if __name__ == "__main__":
                         help="seconds to wait for a connection or a server reply (default: %(default)s)")
     parser.add_argument("--representative", metavar="IP[:PORT]",
                         help="destination to plot for Q2(b) (default: the one with the median mean goodput)")
+    parser.add_argument("--output-dir",
+                        help="directory for this run's CSV/JSON/PDF outputs (default: results/run_<timestamp>)")
     args = parser.parse_args()
 
     if args.max_attempts is None:
@@ -56,4 +58,5 @@ if __name__ == "__main__":
         interval=args.interval,
         timeout_time=args.timeout,
         representative=args.representative,
+        out_dir=args.output_dir,
     )

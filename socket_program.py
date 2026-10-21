@@ -6,6 +6,7 @@ import time
 import threading
 import struct
 import csv
+import os
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -17,11 +18,16 @@ FAIL = (3562835652).to_bytes(10, byteorder='big')
 
 
 
-def runHW2Q1And2(serverList, n, max_attempts, test_time, interval, timeout_time, representative=None):
+def runHW2Q1And2(serverList, n, max_attempts, test_time, interval, timeout_time, representative=None, out_dir=None):
+    #each run writes to its own directory so repeated runs (e.g. per algorithm in Q3) don't overwrite each other
+    out_dir = out_dir or os.path.join("results", time.strftime("run_%Y%m%d_%H%M%S"))
+    os.makedirs(out_dir, exist_ok=True)
+    print(f"Saving outputs to {out_dir}")
+
     #part 1:
-    results = connectN(serverList, n, max_attempts, test_time, interval, timeout_time)
-    Q1c_parse_and_plot(results)
-    Q2_parse_plot_modified(results, interval, representative)
+    results = connectN(serverList, n, max_attempts, test_time, interval, timeout_time, out_dir)
+    Q1c_parse_and_plot(results, out_dir)
+    Q2_parse_plot_modified(results, interval, representative, out_dir)
 
 
 
@@ -35,7 +41,7 @@ Tries connecting and testing unique servers until either n tests succeed or we r
 Failed attempts and their reasons are logged to failures.csv
 returns a list where each entry is (IP_Adress, port, (Tuple of Results from Connect)) = (IP, port, (JSON Test Output, List of tuples: (Time from start, goodput, snd_cwnd, rtt, loss signal), algorithm))
 '''
-def connectN(serverList, n, max_attempts, test_time, interval, timeout_time):
+def connectN(serverList, n, max_attempts, test_time, interval, timeout_time, out_dir="."):
     valid_outputs = 0
     attempt = 0
 
@@ -46,7 +52,8 @@ def connectN(serverList, n, max_attempts, test_time, interval, timeout_time):
     attempted = list()
 
     #every failed attempt is logged with its reason
-    with open("failures.csv", "w", newline="") as f:
+    failure_log = os.path.join(out_dir, "failures.csv")
+    with open(failure_log, "w", newline="") as f:
         csv.writer(f).writerow(["timestamp", "ip", "port", "reason"])
 
 
@@ -73,7 +80,7 @@ def connectN(serverList, n, max_attempts, test_time, interval, timeout_time):
         attempt += 1
         if output[0] == FAIL:
             print(f"{ip}:{port} Failed ({output[1]}). Trying another")
-            with open("failures.csv", "a", newline="") as f:
+            with open(failure_log, "a", newline="") as f:
                 csv.writer(f).writerow([time.strftime("%Y-%m-%d %H:%M:%S"), ip, port, output[1]])
             continue
 
@@ -317,7 +324,8 @@ def wait_for_state(sock, expected):
 
 '''
 Queries every `interval` seconds
-returns a list of tuples where each entry is (elapsed time, goodput, snd_cwnd, rtt, loss signal)
+returns a list of tuples where each entry is (elapsed time, goodput, snd_cwnd, rtt, loss signal,
+    rttvar, pacing_rate, bytes_acked, delivery_rate, bytes_sent, bytes_retrans)
 '''
 def poll_throughput(sock, duration, interval, records_list):
     #off set might need to be changed, 11 works in WSL
@@ -346,6 +354,12 @@ def poll_throughput(sock, duration, interval, records_list):
             snd_cwnd = struct.unpack_from('I', tcp_info_raw, 80)[0]        # tcpi_snd_cwnd (in MSS / segments)
             total_retrans = struct.unpack_from('I', tcp_info_raw, 100)[0]  # tcpi_total_retrans (cumulative lost/retransmitted packets)
             bytes_acked = struct.unpack_from('Q', tcp_info_raw, 120)[0]    # tcpi_bytes_acked (bytes)
+
+            # Recommended extras; later fields are None if this kernel's struct is too short for them
+            rttvar_us = struct.unpack_from('I', tcp_info_raw, 72)[0]       # tcpi_rttvar (microseconds)
+            pacing_rate = struct.unpack_from('Q', tcp_info_raw, 104)[0]    # tcpi_pacing_rate (bytes/s)
+            delivery_rate = struct.unpack_from('Q', tcp_info_raw, 160)[0] if len(tcp_info_raw) >= 168 else None  # tcpi_delivery_rate (bytes/s)
+            bytes_sent, bytes_retrans = struct.unpack_from('QQ', tcp_info_raw, 200) if len(tcp_info_raw) >= 216 else (None, None)  # tcpi_bytes_sent, tcpi_bytes_retrans (bytes)
             
         except OSError as e:
             print(f"Failed to get socket stats: {e}")
@@ -363,7 +377,13 @@ def poll_throughput(sock, duration, interval, records_list):
             goodput_bps, 
             snd_cwnd, 
             rtt_us, 
-            total_retrans
+            total_retrans,
+            rttvar_us,
+            pacing_rate,
+            bytes_acked,
+            delivery_rate,
+            bytes_sent,
+            bytes_retrans
         ))
         
         last_bytes_acked = bytes_acked
@@ -375,7 +395,7 @@ def poll_throughput(sock, duration, interval, records_list):
         
 
 
-def Q1c_parse_and_plot(results):
+def Q1c_parse_and_plot(results, out_dir="."):
     if not results:
         print("No successful results to parse and plot.")
         return
@@ -423,19 +443,21 @@ def Q1c_parse_and_plot(results):
         axes[i].set_ylabel("Goodput (Mbps)")
         axes[i].grid(True, linestyle='--', alpha=0.7)
     
-    with open("q1_summary.csv", "w", newline="") as f:
+    summary_csv = os.path.join(out_dir, "q1_summary.csv")
+    with open(summary_csv, "w", newline="") as f:
         writer = csv.writer(f)
         writer.writerow(["destination_ip", "port", "algorithm", "min_mbps", "median_mbps", "mean_mbps", "p95_mbps"])
         writer.writerows(summary_rows)
-    print("\nSummary table saved to q1_summary.csv")
+    print(f"\nSummary table saved to {summary_csv}")
 
     # Format the overall plot
     axes[-1].set_xlabel("Time (seconds)")
     plt.tight_layout()
     
     # Export the plot
-    plt.savefig("throughput_over_time.pdf")
-    print("\nPlot saved to throughput_over_time.pdf")
+    plot_pdf = os.path.join(out_dir, "throughput_over_time.pdf")
+    plt.savefig(plot_pdf)
+    print(f"\nPlot saved to {plot_pdf}")
 
 
 
@@ -618,7 +640,7 @@ def Q2_parse_plot(results):
 
 
 from matplotlib.backends.backend_pdf import PdfPages
-def Q2_parse_plot_modified(results, interval, representative=None):
+def Q2_parse_plot_modified(results, interval, representative=None, out_dir="."):
     if not results:
         print("No successful results to parse and plot for Q2.")
         return
@@ -628,10 +650,10 @@ def Q2_parse_plot_modified(results, interval, representative=None):
     # 1. Algorithm(s) actually used, as read from each data socket in connect()
     cc_algo = ", ".join(sorted({output[2] for _, _, output in results}))
 
-    run_id = f"run_{int(time.time())}"
+    run_id = os.path.basename(os.path.abspath(out_dir))  # the run's output directory name
     all_runs_json = []
-    csv_filename = "q2_tcp_stats.csv"
-    json_filename = "q2_tcp_stats.json"
+    csv_filename = os.path.join(out_dir, "q2_tcp_stats.csv")
+    json_filename = os.path.join(out_dir, "q2_tcp_stats.json")
 
     # 2. Part 2(a): Process data and store measurements in both CSV and JSON
     with open(csv_filename, mode="w", newline="") as csv_file:
@@ -640,7 +662,9 @@ def Q2_parse_plot_modified(results, interval, representative=None):
         writer.writerow([
             "run_id", "destination_ip", "port", "algorithm",
             "timestamp_s", "goodput_mbps", "snd_cwnd_segments",
-            "rtt_ms", "interval_retrans_pkts", "cumulative_retrans_pkts"
+            "rtt_ms", "interval_retrans_pkts", "cumulative_retrans_pkts",
+            "rttvar_ms", "pacing_rate_mbps", "delivery_rate_mbps",
+            "bytes_acked", "bytes_sent", "bytes_retrans"
         ])
 
         for ip, port, output in results:
@@ -657,16 +681,22 @@ def Q2_parse_plot_modified(results, interval, representative=None):
                 snd_cwnd = rec[2]                # In MSS segments
                 rtt_ms = rec[3] / 1000.0         # Convert microseconds -> milliseconds
                 total_retrans = rec[4]           # Cumulative retransmissions
+                rttvar_ms = rec[5] / 1000.0      # Convert microseconds -> milliseconds
+                pacing_mbps = round(rec[6] * 8 / 1e6, 4)  # Convert bytes/s -> Mbps
+                delivery_mbps = round(rec[8] * 8 / 1e6, 4) if rec[8] is not None else None
+                bytes_acked, bytes_sent, bytes_retrans = rec[7], rec[9], rec[10]  # Cumulative byte counters
 
                 # Compute per-interval retransmissions (loss proxy during this sampling interval)
                 interval_retrans = max(0, total_retrans - prev_retrans)
                 prev_retrans = total_retrans
 
-                # Write row to CSV
+                # Write row to CSV (fields this kernel doesn't report are left empty)
                 writer.writerow([
                     run_id, ip, port, algo,
                     f"{timestamp_s:.3f}", f"{goodput_mbps:.4f}", snd_cwnd,
-                    f"{rtt_ms:.3f}", interval_retrans, total_retrans
+                    f"{rtt_ms:.3f}", interval_retrans, total_retrans,
+                    f"{rttvar_ms:.3f}", pacing_mbps, delivery_mbps,
+                    bytes_acked, bytes_sent, bytes_retrans
                 ])
 
                 # Append to JSON sample list
@@ -676,7 +706,13 @@ def Q2_parse_plot_modified(results, interval, representative=None):
                     "snd_cwnd_segments": snd_cwnd,
                     "rtt_ms": round(rtt_ms, 3),
                     "interval_retrans_pkts": interval_retrans,
-                    "cumulative_retrans_pkts": total_retrans
+                    "cumulative_retrans_pkts": total_retrans,
+                    "rttvar_ms": round(rttvar_ms, 3),
+                    "pacing_rate_mbps": pacing_mbps,
+                    "delivery_rate_mbps": delivery_mbps,
+                    "bytes_acked": bytes_acked,
+                    "bytes_sent": bytes_sent,
+                    "bytes_retrans": bytes_retrans
                 })
 
             all_runs_json.append({
@@ -690,7 +726,11 @@ def Q2_parse_plot_modified(results, interval, representative=None):
                     "snd_cwnd": "Maximum Segment Size (MSS) segments",
                     "rtt": "milliseconds (ms)",
                     "interval_retrans": f"packets retransmitted per {interval_label} interval",
-                    "cumulative_retrans": "total packets retransmitted"
+                    "cumulative_retrans": "total packets retransmitted",
+                    "rttvar": "milliseconds (ms)",
+                    "pacing_rate": "Megabits per second (Mbps)",
+                    "delivery_rate": "Megabits per second (Mbps)",
+                    "byte_counters": "cumulative bytes (bytes_acked, bytes_sent, bytes_retrans)"
                 },
                 "samples": formatted_samples
             })
@@ -715,7 +755,7 @@ def Q2_parse_plot_modified(results, interval, representative=None):
         rep_runs = [runs[len(runs) // 2]]
     print(f"Representative destination: {rep_runs[0]['destination']}:{rep_runs[0]['port']}")
 
-    pdf_filename = "Q2.pdf"
+    pdf_filename = os.path.join(out_dir, "Q2.pdf")
 
     with PdfPages(pdf_filename) as pdf:
 
