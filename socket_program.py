@@ -17,11 +17,11 @@ FAIL = (3562835652).to_bytes(10, byteorder='big')
 
 
 
-def runHW2Q1And2(iplist, n, max_attempts):
+def runHW2Q1And2(iplist, n, max_attempts, test_time, interval, timeout_time):
     #part 1:
-    results = connectN(iplist, n, max_attempts)
+    results = connectN(iplist, n, max_attempts, test_time, interval, timeout_time)
     Q1c_parse_and_plot(results)
-    Q2_parse_plot_modified(results)
+    Q2_parse_plot_modified(results, interval)
 
 
 
@@ -33,7 +33,7 @@ Keeps track of tried ips, number of attempts
 Tries connecting and testing unique ips until either n tests succeed or we reach the max attempts
 returns a list where each entry is (IP_Adress, (Touple of Results from Connect)) = (IP, (JSON Test Output, List of touples: (Time from start, goodput)))
 '''
-def connectN(ipList, n, max_attempts):
+def connectN(ipList, n, max_attempts, test_time, interval, timeout_time):
     valid_outputs = 0
     attempt = 0
 
@@ -59,7 +59,7 @@ def connectN(ipList, n, max_attempts):
         attempted.append(rand_index)
 
         print("attempting test on " + ipList[rand_index])
-        output = connect(ipList[rand_index])
+        output = connect(ipList[rand_index], test_time, interval, timeout_time)
         attempt += 1
         if output[0] == FAIL:
             print("IP Adress " + ipList[rand_index] + " Failed. Trying another")
@@ -89,10 +89,11 @@ def connectN(ipList, n, max_attempts):
 *upon success returns a tuple with the first index being the JSON output, and the second index being the throughput from the thread function
 *   i.e (Json, list from throughput function)
 '''
-def connect(ipAdress):
+def connect(ipAdress, test_time, interval, timeout_time):
     port = 5201 #assumed standard port for iperf3
-    test_time = 45 #length of test in seconds
-    timeout_time = 10 #max time wait before timing out
+    #test_time: length of test in seconds
+    #interval: seconds between throughput samples
+    #timeout_time: max time wait before timing out
     session_cookie = "" #session cookie for the connect/test
 
     #socket.socket creates a socket: first parameter is specifying use ipv4, second indicates use TCP
@@ -235,12 +236,12 @@ def connect(ipAdress):
             end_time = time.time() + test_time
 
 
-            #To satisfy part C we need to spin up a thread and have it sample every 200ms using the 
+            #To satisfy part C we need to spin up a thread and have it sample every `interval` seconds
             throughput_records = []
             
             poll_thread = threading.Thread(
                 target=poll_throughput, 
-                args=(test_socket, test_time, 0.2, throughput_records)
+                args=(test_socket, test_time, interval, throughput_records)
             )
             poll_thread.start()
 
@@ -332,8 +333,8 @@ def connect(ipAdress):
             
 
 '''
-Quries every 200ms 
-returns a list of touples where each entry is (elapsed time, goodput, snd_cwnd, rtt, loss signal)
+Queries every `interval` seconds
+returns a list of tuples where each entry is (elapsed time, goodput, snd_cwnd, rtt, loss signal)
 '''
 def poll_throughput(sock, duration, interval, records_list):
     #off set might need to be changed, 11 works in WSL
@@ -625,10 +626,12 @@ def Q2_parse_plot(results):
 
 
 from matplotlib.backends.backend_pdf import PdfPages
-def Q2_parse_plot_modified(results):
+def Q2_parse_plot_modified(results, interval):
     if not results:
         print("No successful results to parse and plot for Q2.")
         return
+
+    interval_label = f"{interval * 1000:g}ms"  # e.g. "200ms", used in units and plot labels
 
     # 1. Detect the active TCP congestion control algorithm from Linux kernel (fallback to 'cubic')
     try:
@@ -667,7 +670,7 @@ def Q2_parse_plot_modified(results):
                 rtt_ms = rec[3] / 1000.0         # Convert microseconds -> milliseconds
                 total_retrans = rec[4]           # Cumulative retransmissions
 
-                # Compute per-interval retransmissions (loss proxy during this 200ms window)
+                # Compute per-interval retransmissions (loss proxy during this sampling interval)
                 interval_retrans = max(0, total_retrans - prev_retrans)
                 prev_retrans = total_retrans
 
@@ -697,7 +700,7 @@ def Q2_parse_plot_modified(results):
                     "goodput": "Megabits per second (Mbps)",
                     "snd_cwnd": "Maximum Segment Size (MSS) segments",
                     "rtt": "milliseconds (ms)",
-                    "interval_retrans": "packets retransmitted per 200ms interval",
+                    "interval_retrans": f"packets retransmitted per {interval_label} interval",
                     "cumulative_retrans": "total packets retransmitted"
                 },
                 "samples": formatted_samples
@@ -778,7 +781,7 @@ def Q2_parse_plot_modified(results):
             axes_ts[3].step(
                 times, interval_losses,
                 where="post", color="tab:red",
-                label="Interval Retrans (200ms)"
+                label=f"Interval Retrans ({interval_label})"
             )
             axes_ts[3].set_ylabel(
                 "Interval Retrans (pkts)", color="tab:red"
@@ -850,7 +853,7 @@ def Q2_parse_plot_modified(results):
             )
             axes_sc[2].set_title("Loss Signal vs. Goodput")
             axes_sc[2].set_xlabel(
-                "Retransmissions per 200ms Interval"
+                f"Retransmissions per {interval_label} Interval"
             )
             axes_sc[2].set_ylabel("Goodput (Mbps)")
             axes_sc[2].grid(True, linestyle="--", alpha=0.7)

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Read a server list from a JSON or CSV file and return a list of IP addresses.
+"""Read a server list from a JSON or CSV file and return its IP addresses and ports.
 
 The input file is the iperf3 server list as published by
 https://iperf3serverlist.net/ (its "Export JSON" / "Export CSV" buttons), so
@@ -18,8 +18,12 @@ distinct address that ping/traceroute/geolocation can be pointed at directly.
 
 Use as a library:
 
-    from fetch_servers import fetch_ips
+    from fetch_servers import fetch_ips, fetch_servers
     ips = fetch_ips("servers.json")
+    servers = fetch_servers("servers.json")  # [(ip, [port, ...]), ...]
+
+The PORT column may hold a single port or a range such as 5201-5209; records
+without one get the iperf3 default port, 5201.
 
 or as a CLI, which prints one address per line:
 
@@ -45,7 +49,11 @@ from pathlib import Path
 
 # Column names accepted for the host field, in order of preference.
 HOST_KEYS = ("IP/HOST", "IP", "HOST", "HOSTNAME")
+PORT_KEYS = ("PORT", "PORTS")
 SUPPORTED_SUFFIXES = (".json", ".csv")
+
+# Used when a record has no usable PORT value, e.g. a bare address string.
+DEFAULT_PORT = 5201
 
 # Queried directly, over the wire, when the system resolver fails a name.
 PUBLIC_DNS_SERVERS = ("8.8.8.8", "1.1.1.1")
@@ -66,8 +74,18 @@ def fetch_ips(path: str | Path) -> list[str]:
     Raises FileNotFoundError if the file is missing and ValueError if it is not
     readable JSON/CSV carrying a host column.
     """
-    hosts = read_hosts(path)
-    resolved = _resolve_hosts(hosts)
+    return [ip for ip, _ports in fetch_servers(path)]
+
+
+def fetch_servers(path: str | Path) -> list[tuple[str, list[int]]]:
+    """Read a server list file and return (ip, ports) for each distinct address.
+
+    ports lists every port the file advertises for that address, so a PORT
+    value of "5201-5209" becomes nine ports. Addresses come back in file order.
+    Raises the same errors as fetch_ips.
+    """
+    entries = read_server_entries(path)
+    resolved = _resolve_hosts([host for host, _ports in entries])
 
     unresolved = [h for h, ip in resolved.items() if not ip]
     if unresolved:
@@ -78,17 +96,17 @@ def fetch_ips(path: str | Path) -> list[str]:
             file=sys.stderr,
         )
 
-    ips: list[str] = []
-    seen: set[str] = set()
-    for host in hosts:
+    servers: dict[str, list[int]] = {}
+    for host, ports in entries:
         ip = resolved.get(host)
+        if not ip:
+            continue
         # Distinct hostnames sometimes share one machine, and at least one
         # address is listed both as a literal and behind a name.
-        if ip and ip not in seen:
-            seen.add(ip)
-            ips.append(ip)
+        known = servers.setdefault(ip, [])
+        known.extend(port for port in ports if port not in known)
 
-    return ips
+    return list(servers.items())
 
 
 def read_hosts(path: str | Path) -> list[str]:
@@ -96,6 +114,14 @@ def read_hosts(path: str | Path) -> list[str]:
 
     The values are returned exactly as written, so a mix of IP literals and DNS
     names is expected. Resolution happens later, in fetch_ips.
+    """
+    return [host for host, _ports in read_server_entries(path)]
+
+
+def read_server_entries(path: str | Path) -> list[tuple[str, list[int]]]:
+    """Validate a JSON or CSV server list file and return (host, ports) pairs.
+
+    Hosts are returned exactly as written; see read_hosts.
     """
     path = Path(path)
     if not path.exists():
@@ -122,18 +148,22 @@ def read_hosts(path: str | Path) -> list[str]:
     if not records:
         raise ValueError(f"{path} contained no server records")
 
-    hosts = []
+    entries = []
     for record in records:
-        host = record if isinstance(record, str) else _host_of(record)
+        if isinstance(record, str):
+            host, ports = record, [DEFAULT_PORT]
+        else:
+            host = _field_of(record, HOST_KEYS)
+            ports = _parse_ports(_field_of(record, PORT_KEYS)) or [DEFAULT_PORT]
         host = host.strip().rstrip(".")
         if host:
-            hosts.append(host)
-    if not hosts:
+            entries.append((host, ports))
+    if not entries:
         raise ValueError(
             f"{path} has no usable host values; expected a "
             f"{' / '.join(HOST_KEYS)} column"
         )
-    return hosts
+    return entries
 
 
 def _parse_json(text: str, path: Path) -> list:
@@ -172,13 +202,30 @@ def _parse_csv(text: str, path: Path) -> list[dict]:
     return rows
 
 
-def _host_of(record: dict) -> str:
-    """Read the host field, tolerating header drift between exports."""
-    for key in HOST_KEYS:
+def _field_of(record: dict, keys: tuple[str, ...]) -> str:
+    """Read the first of keys present in record, tolerating header drift between exports."""
+    for key in keys:
         for actual, value in record.items():
             if actual and actual.strip().upper() == key:
                 return str(value or "").strip()
     return ""
+
+
+def _parse_ports(spec: str) -> list[int]:
+    """Expand a PORT value such as "5201", "5201-5209" or "5201,5300" into ports.
+
+    Malformed pieces are skipped, so an unusable value yields an empty list.
+    """
+    ports: list[int] = []
+    for part in spec.replace(" ", "").split(","):
+        low, _, high = part.partition("-")
+        try:
+            first, last = int(low), int(high or low)
+        except ValueError:
+            continue
+        if 0 < first <= last <= 65535:
+            ports.extend(port for port in range(first, last + 1) if port not in ports)
+    return ports
 
 
 def _resolve(host: str) -> str | None:
