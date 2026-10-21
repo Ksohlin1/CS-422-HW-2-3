@@ -1,0 +1,5 @@
+timestamp,ip,port,reason
+2026-10-20 21:29:43,69.48.239.124,30005,Failed to recieve parameter acknowledgement: server is busy (ACCESS_DENIED)
+2026-10-20 21:29:48,138.199.14.66,5201,Failed to recieve parameter acknowledgement: server is busy (ACCESS_DENIED)
+2026-10-20 21:29:58,66.35.20.123,30006,Failed to connect to server: timed out
+2026-10-20 21:30:06,84.17.57.129,5201,Failed to recieve parameter acknowledgement: server is busy (ACCESS_DENIED)

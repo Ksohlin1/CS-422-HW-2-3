@@ -9,6 +9,7 @@ if __name__ == "__main__":
         python3 main.py servers.json
         python3 main.py servers.csv -n 10 --duration 60 --interval 0.2
         python3 main.py servers.json --compare --algorithms cubic reno bbr --repetitions 3   (Q3)
+        python3 main.py --replot results/q3_final --representative 170.83.216.19:5202     (Q3 plots from saved data)
     """
 
     #argument set up (copied from assignment 1)
@@ -16,7 +17,7 @@ if __name__ == "__main__":
         description="Run iperf3-compatible TCP tests against random public iperf3 servers "
                     "(HW 2: Q1 and Q2 by default, Q3 with --compare)."
     )
-    parser.add_argument("path", help="JSON or CSV server list with IP/HOST and PORT columns")
+    parser.add_argument("path", nargs="?", help="JSON or CSV server list with IP/HOST and PORT columns")
     parser.add_argument("-n", "--num-servers", type=int, default=10,
                         help="number of servers to test successfully (default: %(default)s)")
     parser.add_argument("--max-attempts", type=int,
@@ -38,7 +39,15 @@ if __name__ == "__main__":
                         help="congestion control algorithms to compare with --compare (default: %(default)s)")
     parser.add_argument("--repetitions", type=int, default=3,
                         help="repetitions of every destination/algorithm pair with --compare (default: %(default)s)")
+    parser.add_argument("--replot", metavar="RUN_DIR",
+                        help="rebuild the Q3 comparison from a finished --compare run (no tests; use with --representative)")
     args = parser.parse_args()
+
+    if args.replot:
+        compare.replotHW2Q3(args.replot, args.representative)
+        raise SystemExit(0)
+    if not args.path:
+        parser.error("the server list path is required (unless --replot is used)")
 
     if args.max_attempts is None:
         args.max_attempts = args.num_servers + 20

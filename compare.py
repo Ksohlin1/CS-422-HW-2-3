@@ -8,6 +8,7 @@ Run through main.py:  python3 main.py servers.json --compare --algorithms cubic 
   and the algorithm list is rotated by one each repetition (rep 1: cubic reno bbr, rep 2: reno bbr cubic, ...)
 * Each run is logged in run_log.csv; each (algorithm, repetition) gets the Q1/Q2 outputs in <algo>_rep<k>/
 * comparison/ holds q3_summary.csv and the PDFs comparing algorithms on one representative destination
+* --replot DIR rebuilds the comparison from a finished run's saved measurements (e.g. for another representative)
 '''
 import csv
 import json
@@ -125,6 +126,40 @@ def runHW2Q3(serverList, n, max_attempts, test_time, interval, timeout_time, alg
     Q3_summary(results, algorithms, cmp_dir)
     Q3_plot(results, algorithms, repetitions, rep_dest, interval, cmp_dir)
     print(f"\nQ3 outputs saved to {out_dir} (run log: {log_path})")
+
+
+def replotHW2Q3(run_dir, representative=None):
+    '''
+    Rebuild the comparison from a finished run's saved measurements (<algo>_rep<k>/q2_tcp_stats.json),
+    e.g. to plot a different representative destination without re-running the experiment.
+    Writes to <run_dir>/comparison_<ip>_<port>/ so the original comparison/ is kept.
+    '''
+    with open(os.path.join(run_dir, "config.json")) as f:
+        config = json.load(f)
+    algorithms, repetitions = config["algorithms"], config["repetitions"]
+    destinations = [(name.rsplit(":", 1)[0], int(name.rsplit(":", 1)[1])) for name in config["destinations"]]
+
+    #results[(algo, rep)] in the same shape runHW2Q3 builds; samples become poll_throughput-style records
+    results = {(algo, rep): [] for algo in algorithms for rep in range(1, repetitions + 1)}
+    for algo, rep in results:
+        path = os.path.join(run_dir, f"{algo}_rep{rep}", "q2_tcp_stats.json")
+        if not os.path.exists(path):
+            continue  #every run of this (algorithm, repetition) failed
+        with open(path) as f:
+            for run in json.load(f):
+                records = [(s["timestamp_s"], s["goodput_mbps"] * 1e6, s["snd_cwnd_segments"], s["rtt_ms"] * 1000,
+                            s["cumulative_retrans_pkts"]) for s in run["samples"]]
+                results[(algo, rep)].append((run["destination"], run["port"], (b"", records, run["algorithm"])))
+
+    rep_dest = pick_representative(results, destinations, algorithms, representative)
+    if rep_dest is None:
+        print(f"No saved measurements in {run_dir}; nothing to plot.")
+        return
+    print(f"Representative destination: {rep_dest}")
+    cmp_dir = os.path.join(run_dir, "comparison_" + rep_dest.replace(":", "_"))
+    os.makedirs(cmp_dir, exist_ok=True)
+    Q3_summary(results, algorithms, cmp_dir)
+    Q3_plot(results, algorithms, repetitions, rep_dest, config["interval_s"], cmp_dir)
 
 
 def check_algorithms(algorithms):

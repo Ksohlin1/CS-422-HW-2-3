@@ -229,7 +229,7 @@ def connect(ipAdress, port, test_time, interval, timeout_time, algorithm=None):
 
             #data to send will be a full buffer of random shit (length matching what we put in the JSON parameter), in this case 0's
             to_send = b'0' * 131072
-            end_time = time.time() + test_time
+            end_time = time.monotonic() + test_time  #monotonic: unaffected if the system clock is adjusted mid-test
             bytes_sent = 0
 
 
@@ -248,7 +248,7 @@ def connect(ipAdress, port, test_time, interval, timeout_time, algorithm=None):
 
             #send continuous data for test_time seconds:
             try:
-                while time.time() < end_time:
+                while time.monotonic() < end_time:
                     test_socket.sendall(to_send)
                     bytes_sent += len(to_send)
             except OSError as e:
@@ -343,7 +343,7 @@ def poll_throughput(sock, done, interval, records_list):
     #off set might need to be changed, 11 works in WSL
     TCP_INFO = 11 
     last_bytes_acked = 0
-    last_time = time.time()
+    last_time = time.monotonic()  #monotonic so a clock adjustment can't distort delta_t
     start_time = last_time
     
     #wait() returns True as soon as done is set, so a sample is never taken after sending stops
@@ -377,7 +377,7 @@ def poll_throughput(sock, done, interval, records_list):
             print(f"Failed to get socket stats: {e}")
             break
             
-        current_time = time.time()
+        current_time = time.monotonic()
         delta_t = current_time - last_time
         delta_bytes = bytes_acked - last_bytes_acked
         
