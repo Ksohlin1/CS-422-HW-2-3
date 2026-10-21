@@ -32,7 +32,8 @@ def runHW2Q1And2(serverList, n, max_attempts, test_time, interval, timeout_time)
 Keeps track of tried servers, number of attempts
 serverList is a list of (ip, [ports]) from fetch_servers; each attempt uses one random port of that server
 Tries connecting and testing unique servers until either n tests succeed or we reach the max attempts
-returns a list where each entry is (IP_Adress, port, (Tuple of Results from Connect)) = (IP, port, (JSON Test Output, List of tuples: (Time from start, goodput, snd_cwnd, rtt, loss signal)))
+Failed attempts and their reasons are logged to failures.csv
+returns a list where each entry is (IP_Adress, port, (Tuple of Results from Connect)) = (IP, port, (JSON Test Output, List of tuples: (Time from start, goodput, snd_cwnd, rtt, loss signal), algorithm))
 '''
 def connectN(serverList, n, max_attempts, test_time, interval, timeout_time):
     valid_outputs = 0
@@ -43,6 +44,10 @@ def connectN(serverList, n, max_attempts, test_time, interval, timeout_time):
 
     #index of attempted ips
     attempted = list()
+
+    #every failed attempt is logged with its reason
+    with open("failures.csv", "w", newline="") as f:
+        csv.writer(f).writerow(["timestamp", "ip", "port", "reason"])
 
 
     while(valid_outputs < n):
@@ -67,7 +72,9 @@ def connectN(serverList, n, max_attempts, test_time, interval, timeout_time):
         output = connect(ip, port, test_time, interval, timeout_time)
         attempt += 1
         if output[0] == FAIL:
-            print(f"{ip}:{port} Failed. Trying another")
+            print(f"{ip}:{port} Failed ({output[1]}). Trying another")
+            with open("failures.csv", "a", newline="") as f:
+                csv.writer(f).writerow([time.strftime("%Y-%m-%d %H:%M:%S"), ip, port, output[1]])
             continue
 
         #if didnt fail:
@@ -89,9 +96,10 @@ def connectN(serverList, n, max_attempts, test_time, interval, timeout_time):
     *After we recieve a "ready for test" acknowledgement through the control socket, we start spamming full length messages out of the test socket for test_time seconds
 * We then tell the server the test is finished and recieve the results
 
-*If at any point the connection drops or deviates from the expected we return -1
-*upon success returns a tuple with the first index being the JSON output, and the second index being the throughput from the thread function
-*   i.e (Json, list from throughput function)
+*If at any point the connection drops or deviates from the expected we return (FAIL, reason)
+*upon success returns a tuple with the first index being the JSON output, the second index being the throughput from the thread function,
+* and the third the congestion control algorithm the data socket used
+*   i.e (Json, list from throughput function, algorithm)
 '''
 def connect(ipAdress, port, test_time, interval, timeout_time):
     #test_time: length of test in seconds
@@ -108,8 +116,7 @@ def connect(ipAdress, port, test_time, interval, timeout_time):
         try:
             sock.connect((ipAdress, port))
         except OSError as e:
-            print(f"Failed to connect to server: {e}")
-            return (FAIL, FAIL)
+            return (FAIL, f"Failed to connect to server: {e}")
         
         session_cookie = generate_session_cookie()
 
@@ -117,8 +124,7 @@ def connect(ipAdress, port, test_time, interval, timeout_time):
         try:
             sock.sendall(session_cookie)
         except OSError as e:
-            print(f"Failed to transmit session cookie: {e}")
-            return (FAIL, FAIL)
+            return (FAIL, f"Failed to transmit session cookie: {e}")
 
 
 
@@ -127,8 +133,7 @@ def connect(ipAdress, port, test_time, interval, timeout_time):
         try:
             wait_for_state(sock, 9) #9 is PARAM_EXCHANGE
         except OSError as e:
-            print(f"Failed to recieve parameter acknowledgement: {e}")
-            return (FAIL, FAIL)
+            return (FAIL, f"Failed to recieve parameter acknowledgement: {e}")
 
 
 
@@ -158,8 +163,7 @@ def connect(ipAdress, port, test_time, interval, timeout_time):
             sock.sendall(length_header)
             sock.sendall(message_bytes)
         except OSError as e:
-            print(f"Failed to transmit JSON payload: {e}")
-            return (FAIL, FAIL)
+            return (FAIL, f"Failed to transmit JSON payload: {e}")
 
 
 
@@ -169,8 +173,7 @@ def connect(ipAdress, port, test_time, interval, timeout_time):
         try:
             wait_for_state(sock, 10) #10 is CREATE_STREAMS
         except OSError as e:
-            print(f"Failed to recieve parameter acknowledgement: {e}")
-            return (FAIL, FAIL)
+            return (FAIL, f"Failed to recieve parameter acknowledgement: {e}")
 
 
 
@@ -186,8 +189,13 @@ def connect(ipAdress, port, test_time, interval, timeout_time):
                 test_socket.connect((ipAdress, port))
                 test_socket.sendall(session_cookie)
             except OSError as e:
-                print(f"Failed to open test socket: {e}")
-                return (FAIL, FAIL)
+                return (FAIL, f"Failed to open test socket: {e}")
+
+            #Record the algorithm the kernel actually uses on the data socket (TCP_CONGESTION is 13 on Linux)
+            try:
+                cc_algo = test_socket.getsockopt(socket.IPPROTO_TCP, 13, 16).split(b'\0')[0].decode()
+            except OSError:
+                cc_algo = "unknown" #platforms without TCP_CONGESTION (e.g. macOS)
 
 
 
@@ -198,8 +206,7 @@ def connect(ipAdress, port, test_time, interval, timeout_time):
             try:
                 wait_for_state(sock, 1) #1 is TEST_START
             except OSError as e:
-                print(f"Test Socket failed to recieve go ahead: {e}")
-                return (FAIL, FAIL)
+                return (FAIL, f"Test Socket failed to recieve go ahead: {e}")
 
 
 
@@ -228,8 +235,7 @@ def connect(ipAdress, port, test_time, interval, timeout_time):
                     test_socket.sendall(to_send)
                     bytes_sent += len(to_send)
             except OSError as e:
-                print(f"Test Socket data transmission failed: {e}")
-                return (FAIL, FAIL)
+                return (FAIL, f"Test Socket data transmission failed: {e}")
 
             #join thread once test finishes
             poll_thread.join()
@@ -270,8 +276,7 @@ def connect(ipAdress, port, test_time, interval, timeout_time):
             server_res_len = int.from_bytes(recv_exact(sock, 4), byteorder='big')
             server_res_bytes = recv_exact(sock, server_res_len)
         except OSError as e:
-            print(f"Error during wrapup: {e}")
-            return (FAIL, FAIL)
+            return (FAIL, f"Error during wrapup: {e}")
 
         #Finish like iperf3: server sends DISPLAY_RESULTS (14), client answers IPERF_DONE (16).
         #We already have the results, so a server hanging up here doesn't fail the test.
@@ -280,7 +285,7 @@ def connect(ipAdress, port, test_time, interval, timeout_time):
             sock.sendall((16).to_bytes(1, byteorder='big'))
         except OSError as e:
             print(f"Warning: server did not finish cleanly: {e}")
-        return (server_res_bytes, throughput_records)
+        return (server_res_bytes, throughput_records, cc_algo)
 
 
 def recv_exact(sock, length):
@@ -389,7 +394,7 @@ def Q1c_parse_and_plot(results):
     print("-" * 83)
     
     for i, (ip, port, output) in enumerate(results):
-        json_bytes, records = output
+        json_bytes, records, _ = output
         destination = f"{ip}:{port}"
         
         # Handle edge case where a test completed but no throughput records were polled
@@ -612,12 +617,8 @@ def Q2_parse_plot_modified(results, interval):
 
     interval_label = f"{interval * 1000:g}ms"  # e.g. "200ms", used in units and plot labels
 
-    # 1. Detect the active TCP congestion control algorithm from Linux kernel (fallback to 'cubic')
-    try:
-        with open("/proc/sys/net/ipv4/tcp_congestion_control", "r") as f:
-            cc_algo = f.read().strip()
-    except OSError:
-        cc_algo = "(Assumed) cubic"
+    # 1. Algorithm(s) actually used, as read from each data socket in connect()
+    cc_algo = ", ".join(sorted({output[2] for _, _, output in results}))
 
     run_id = f"run_{int(time.time())}"
     all_runs_json = []
@@ -635,7 +636,7 @@ def Q2_parse_plot_modified(results, interval):
         ])
 
         for ip, port, output in results:
-            _, records = output
+            _, records, algo = output
             if not records:
                 continue
 
@@ -655,7 +656,7 @@ def Q2_parse_plot_modified(results, interval):
 
                 # Write row to CSV
                 writer.writerow([
-                    run_id, ip, port, cc_algo,
+                    run_id, ip, port, algo,
                     f"{timestamp_s:.3f}", f"{goodput_mbps:.4f}", snd_cwnd,
                     f"{rtt_ms:.3f}", interval_retrans, total_retrans
                 ])
@@ -674,7 +675,7 @@ def Q2_parse_plot_modified(results, interval):
                 "run_id": run_id,
                 "destination": ip,
                 "port": port,
-                "algorithm": cc_algo,
+                "algorithm": algo,
                 "units": {
                     "timestamp": "seconds (s)",
                     "goodput": "Megabits per second (Mbps)",
