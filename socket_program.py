@@ -125,18 +125,7 @@ def connect(ipAdress, port, test_time, interval, timeout_time):
 
         #wait for sever to respond with state changes to PARAM_EXCHANGE (allowing us to give it paramters)
         try:
-            acknowledged = False
-            while (not acknowledged):
-                data1 = sock.recv(1) #use 1 here in case server sending multiple state changes
-    
-                #9 is PARAM_EXCHANGE saying parameters were recieved      
-                #must convert 9 from integers to raw bytes                         
-                if (data1 == (9).to_bytes(1, byteorder='big')):                             
-                    acknowledged = True
-    
-                #If the connection closes, recv will instantly return an empty string so we need to check:
-                if (not data1):
-                    raise OSError
+            wait_for_state(sock, 9) #9 is PARAM_EXCHANGE
         except OSError as e:
             print(f"Failed to recieve parameter acknowledgement: {e}")
             return (FAIL, FAIL)
@@ -178,18 +167,7 @@ def connect(ipAdress, port, test_time, interval, timeout_time):
 
         #wait for sever to respond with state changes acknowledging CREATE_STREAMS or PARAM_EXCHANGE 
         try:
-            acknowledged = False
-            while (not acknowledged):
-               data1 = sock.recv(1) #use 1 here in case server sending multiple state changes
-
-               #10 is CREATE_STREAMS acknowledgement state (saying a stream has been created)                  
-               if (data1 == (10).to_bytes(1, byteorder='big')):                             
-                   acknowledged = True
-
-                #If the connection closes, recv will instantly return an empty string so we need to check:
-               if (not data1):
-                   raise OSError
-
+            wait_for_state(sock, 10) #10 is CREATE_STREAMS
         except OSError as e:
             print(f"Failed to recieve parameter acknowledgement: {e}")
             return (FAIL, FAIL)
@@ -201,14 +179,14 @@ def connect(ipAdress, port, test_time, interval, timeout_time):
         #time to open second TCP socket using same session cookie which will be used to test
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as test_socket:
             test_socket.settimeout(timeout_time)
-            test_socket.connect((ipAdress, port))
             
             
-            #try to send session_cookie identifier, close out if failed
+            #try to connect and send session_cookie identifier, close out if failed
             try:
+                test_socket.connect((ipAdress, port))
                 test_socket.sendall(session_cookie)
             except OSError as e:
-                print(f"Failed to transmit session cookie for test socket: {e}")
+                print(f"Failed to open test socket: {e}")
                 return (FAIL, FAIL)
 
 
@@ -218,15 +196,7 @@ def connect(ipAdress, port, test_time, interval, timeout_time):
             #Wait until we recieve the go ahead (TEST_STATE):
             #note we use the control socket here
             try:
-                acknowledged = False
-                while (not acknowledged):
-                    data2 = sock.recv(1) #use 1 here in case server sending multiple state changes        
-                    if (data2 == (1).to_bytes(1, byteorder='big')):                             
-                        acknowledged = True   
-
-                    #If the connection closes:
-                    if (not data2):
-                        raise OSError
+                wait_for_state(sock, 1) #1 is TEST_START
             except OSError as e:
                 print(f"Test Socket failed to recieve go ahead: {e}")
                 return (FAIL, FAIL)
@@ -237,6 +207,7 @@ def connect(ipAdress, port, test_time, interval, timeout_time):
             #data to send will be a full buffer of random shit (length matching what we put in the JSON parameter), in this case 0's
             to_send = b'0' * 131072
             end_time = time.time() + test_time
+            bytes_sent = 0
 
 
             #To satisfy part C we need to spin up a thread and have it sample every `interval` seconds
@@ -255,6 +226,7 @@ def connect(ipAdress, port, test_time, interval, timeout_time):
             try:
                 while time.time() < end_time:
                     test_socket.sendall(to_send)
+                    bytes_sent += len(to_send)
             except OSError as e:
                 print(f"Test Socket data transmission failed: {e}")
                 return (FAIL, FAIL)
@@ -272,66 +244,69 @@ def connect(ipAdress, port, test_time, interval, timeout_time):
         #finally return results once gathered
         try:
             sock.sendall((4).to_bytes(1, byteorder='big'))
+            wait_for_state(sock, 13) #13 is EXCHANGE_RESULTS
 
+            #We send our results first (bytes sent, retransmits from TCP_INFO), then read out the server's
+            client_stats = json.dumps({
+                "cpu_util_total": 0,
+                "cpu_util_user": 0,
+                "cpu_util_system": 0,
+                "sender_has_retransmits": 1,
+                "streams": [{
+                        "id": 1,
+                        "bytes": bytes_sent,
+                        "retransmits": throughput_records[-1][4] if throughput_records else 0,
+                        "jitter": 0,
+                        "errors": 0,
+                        "packets": 0,
+                        "start_time": 0,
+                        "end_time": test_time
+                    }]
+            }, separators=(',', ':')).encode('utf-8')
+            sock.sendall(len(client_stats).to_bytes(4, byteorder='big'))
+            sock.sendall(client_stats)
 
-            
-            while True:
-                data3 = sock.recv(1)
-
-                #If the connection closes:
-                if (not data3):
-                    raise OSError
-
-                #State moved to EXCHANGE_RESULTS (13)
-                #We send a dummy JSON because the server needs it, then read out the results
-                if data3 == (13).to_bytes(1, byteorder='big'): 
-                    client_stats = json.dumps({
-                        "cpu_util_total": 0,
-                        "cpu_util_user": 0,
-                        "cpu_util_system": 0,
-                        "sender_has_retransmits": 0,
-                        "streams": [{
-                                "id": 1,
-                                "bytes": 0,
-                                "retransmits": -1,
-                                "jitter": 0,
-                                "errors": 0,
-                                "packets": 0,
-                                "start_time": 0,
-                                "end_time": test_time
-                            }]
-                    }, separators=(',', ':')).encode('utf-8')
-                    
-                    sock.sendall(len(client_stats).to_bytes(4, byteorder='big'))
-                    sock.sendall(client_stats)
-
-
-
-                    #Read data out:
-                    #First recieve the 4 bytes indicating length:
-                    length_bytes = sock.recv(4)
-                    if len(length_bytes) != 4:
-                        raise OSError("Server connection closed before reading out data")
-                    server_res_len = int.from_bytes(length_bytes, byteorder='big')
-                    
-                    # Read the output based on length until finished, return
-                    server_res_bytes = b''
-                    while len(server_res_bytes) < server_res_len:
-                        chunk = sock.recv(server_res_len - len(server_res_bytes))
-                        if not chunk:
-                            break
-                        server_res_bytes += chunk
-                        
-                    return (server_res_bytes, throughput_records)#
-
-            return (FAIL, FAIL) #if makes it outside the while loop
-                
-
-
-                
+            #Read data out: 4 bytes indicating length, then the JSON
+            server_res_len = int.from_bytes(recv_exact(sock, 4), byteorder='big')
+            server_res_bytes = recv_exact(sock, server_res_len)
         except OSError as e:
             print(f"Error during wrapup: {e}")
             return (FAIL, FAIL)
+
+        #Finish like iperf3: server sends DISPLAY_RESULTS (14), client answers IPERF_DONE (16).
+        #We already have the results, so a server hanging up here doesn't fail the test.
+        try:
+            wait_for_state(sock, 14)
+            sock.sendall((16).to_bytes(1, byteorder='big'))
+        except OSError as e:
+            print(f"Warning: server did not finish cleanly: {e}")
+        return (server_res_bytes, throughput_records)
+
+
+def recv_exact(sock, length):
+    #recv can return fewer bytes than asked for, so keep reading until we have them all
+    data = b''
+    while len(data) < length:
+        chunk = sock.recv(length - len(data))
+        if not chunk:
+            raise OSError("server closed the connection")
+        data += chunk
+    return data
+
+
+def wait_for_state(sock, expected):
+    #Read state bytes until `expected` arrives; raise if the server rejects or aborts the test
+    while True:
+        state = struct.unpack('b', recv_exact(sock, 1))[0] #signed byte, so ACCESS_DENIED is -1
+        if state == expected:
+            return
+        if state == -1: #ACCESS_DENIED
+            raise OSError("server is busy (ACCESS_DENIED)")
+        if state == -2: #SERVER_ERROR, followed by the iperf3 error code and errno
+            i_errno, err = struct.unpack('!ii', recv_exact(sock, 8))
+            raise OSError(f"server rejected the test (SERVER_ERROR {i_errno}, errno {err})")
+        if state == 11: #SERVER_TERMINATE
+            raise OSError("server terminated the test")
 
             
 
