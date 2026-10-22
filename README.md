@@ -145,7 +145,7 @@ Use the included `listed_iperf3_servers.json` input, or a CSV/JSON server list
 containing addresses and ports.
 
 Build and load on a Linux host or VM with matching kernel headers and a C
-compiler (macOS cannot load Linux modules):
+compiler:
 
 ```sh
 make -C custom_congestion_module
