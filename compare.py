@@ -200,6 +200,10 @@ def check_algorithms(algorithms):
             try:
                 s.setsockopt(socket.IPPROTO_TCP, TCP_CONGESTION, algo.encode())
             except OSError as e:
+                if algo == "hybrid":
+                    raise SystemExit(
+                        f"error: cannot select 'hybrid' ({e}). Build and load congestion/tcp_hybrid.ko "
+                        "on the Linux host first; see README.md.")
                 raise SystemExit(
                     f"error: cannot select '{algo}' on a socket ({e}).\n"
                     f"  available: {_read_proc('tcp_available_congestion_control')}\n"

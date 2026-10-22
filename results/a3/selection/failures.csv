@@ -1,0 +1,4 @@
+timestamp,ip,port,reason
+2026-10-21 23:03:51,23.249.58.14,30005,Test Socket data transmission failed: [Errno 32] Broken pipe
+2026-10-21 23:04:06,195.181.162.195,5201,Failed to recieve parameter acknowledgement: server is busy (ACCESS_DENIED)
+2026-10-21 23:04:15,189.25.101.151,30005,Test Socket data transmission failed: [Errno 32] Broken pipe

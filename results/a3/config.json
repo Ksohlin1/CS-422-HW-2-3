@@ -1,0 +1,26 @@
+{
+  "started": "2026-10-21 23:04:18",
+  "kernel": "6.8.0-147-generic",
+  "available_algorithms": "reno cubic bbr hybrid",
+  "allowed_algorithms": "reno cubic bbr hybrid",
+  "default_algorithm": "cubic",
+  "algorithms": [
+    "cubic",
+    "reno",
+    "bbr",
+    "hybrid"
+  ],
+  "repetitions": 3,
+  "duration_s": 30,
+  "interval_s": 0.2,
+  "timeout_s": 10,
+  "test_order": "interleaved: for each repetition, for each destination, every algorithm back-to-back; the algorithm list is rotated by one each repetition",
+  "destinations": [
+    "138.199.4.1:5201",
+    "23.105.9.80:5205",
+    "148.230.59.38:30001",
+    "212.237.217.41:5205",
+    "208.110.65.2:5204"
+  ],
+  "representative": "148.230.59.38:30001"
+}
