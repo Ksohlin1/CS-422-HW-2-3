@@ -142,15 +142,7 @@ If necessary, a host administrator can add the requested registered algorithms
 to `net.ipv4.tcp_allowed_congestion_control`, preserving the existing entries.
 
 Use the included `listed_iperf3_servers.json` input, or a CSV/JSON server list
-containing addresses and ports. Public destinations must be reachable on their
-advertised TCP ports. The client implements the protocol itself; the `iperf3`
-binary is not a dependency.
-
-The custom algorithm from `Q3b.md` is implemented as the Linux TCP module
-`hybrid` in `custom_congestion_module/`. It controls the real TCP congestion window, so the
-existing TCP_INFO measurements and comparison plots work without a Python
-approximation. Linux owns retransmission and recovery; see its
-[congestion-control interface](https://github.com/torvalds/linux/blob/v6.8/include/net/tcp.h).
+containing addresses and ports.
 
 Build and load on a Linux host or VM with matching kernel headers and a C
 compiler (macOS cannot load Linux modules):
