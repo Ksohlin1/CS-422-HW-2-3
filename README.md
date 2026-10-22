@@ -87,3 +87,82 @@ docker run --rm --network host -v "$PWD/results:/app/results" cs422-hw2 \
 | `--replot RUN_DIR` | | Rebuild Q3 plots from saved measurements |
 
 Outside Docker the same commands are `python3 main.py ...`. Dependencies are Python 3, numpy, and matplotlib (`requirements.txt`). The image installs those two from pip. The Ubuntu `python3-matplotlib` package depends on `unicode-data`, and unpacking that package fails on some Docker hosts.
+
+
+
+
+
+## Dependencies and reproducible setup for assignment 3 option 1
+
+Linux Kernel Version: 6.8.0-147-generic
+
+From the repository root on Ubuntu, install the dependencies:
+
+```sh
+sudo apt update
+sudo apt install -y python3 python3-venv python3-pip build-essential linux-headers-$(uname -r)
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install numpy matplotlib
+python -c 'import numpy, matplotlib; print("NumPy:", numpy.__version__, "Matplotlib:", matplotlib.__version__)'
+```
+
+Activate `.venv` again in each new terminal before running Python commands.
+On WSL2 or a custom kernel, Ubuntu's package repositories may not provide
+matching headers; obtain the headers/build tree for that exact kernel before
+building the module. The Makefile accepts `KDIR=/path/to/kernel/build`.
+
+Record the environment used for a run:
+
+```sh
+uname -r
+python --version
+python -m pip freeze > dependencies-used.txt
+```
+
+To recreate the recorded Python package versions in a fresh virtual environment:
+
+```sh
+python -m pip install -r dependencies-used.txt
+```
+
+## Reproduce the experiments
+
+Check which algorithms are registered and available to unprivileged processes:
+
+```sh
+cat /proc/sys/net/ipv4/tcp_available_congestion_control
+cat /proc/sys/net/ipv4/tcp_allowed_congestion_control
+```
+
+If BBR is missing, load it on the Linux host with `sudo modprobe tcp_bbr`.
+Build and load `hybrid` using the commands below, then check the lists again.
+Every algorithm passed to `--algorithms` must be selectable by the test process.
+If necessary, a host administrator can add the requested registered algorithms
+to `net.ipv4.tcp_allowed_congestion_control`, preserving the existing entries.
+
+Use the included `listed_iperf3_servers.json` input, or a CSV/JSON server list
+containing addresses and ports. Public destinations must be reachable on their
+advertised TCP ports. The client implements the protocol itself; the `iperf3`
+binary is not a dependency.
+
+The custom algorithm from `Q3b.md` is implemented as the Linux TCP module
+`hybrid` in `custom_congestion_module/`. It controls the real TCP congestion window, so the
+existing TCP_INFO measurements and comparison plots work without a Python
+approximation. Linux owns retransmission and recovery; see its
+[congestion-control interface](https://github.com/torvalds/linux/blob/v6.8/include/net/tcp.h).
+
+Build and load on a Linux host or VM with matching kernel headers and a C
+compiler (macOS cannot load Linux modules):
+
+```sh
+make -C custom_congestion_module
+sudo insmod custom_congestion_module/tcp_hybrid.ko
+python main.py listed_iperf3_servers.json --compare -n 5 --algorithms cubic reno bbr hybrid --duration 30 --interval 0.2 --timeout 10 --repetitions 3 --output-dir results/a3
+```
+
+For a shorter functionality check, use a separate output directory:
+
+```sh
+python main.py listed_iperf3_servers.json --compare -n 1 --algorithms cubic reno bbr hybrid --duration 10 --interval 0.2 --repetitions 1 --max-attempts 5 --output-dir results/smoke
+```
