@@ -7,6 +7,7 @@ import threading
 import struct
 import csv
 import os
+import platform
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -17,12 +18,69 @@ import numpy as np
 FAIL = (3562835652).to_bytes(10, byteorder='big')
 
 
+def record_host_environment(out_dir):
+    """Save the kernel and TCP settings this run actually used.
+
+    Inside Docker, platform.release() is the host kernel. TCP congestion
+    control and TCP_INFO come from that kernel. /etc/os-release is the
+    container image (Ubuntu 24.04), which only supplies user space.
+    """
+    os_release = {}
+    try:
+        with open("/etc/os-release") as f:
+            for line in f:
+                line = line.strip()
+                if "=" not in line:
+                    continue
+                key, value = line.split("=", 1)
+                os_release[key] = value.strip().strip('"')
+    except OSError:
+        pass
+
+    def read_proc(name):
+        try:
+            with open(f"/proc/sys/net/ipv4/{name}") as f:
+                return f.read().strip()
+        except OSError:
+            return None
+
+    info = {
+        "recorded_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "host_kernel": platform.release(),
+        "host_uname": " ".join(platform.uname()),
+        "user_space_os": os_release.get("PRETTY_NAME"),
+        "python": platform.python_version(),
+        "tcp_congestion_control": read_proc("tcp_congestion_control"),
+        "tcp_available_congestion_control": read_proc("tcp_available_congestion_control"),
+        "tcp_allowed_congestion_control": read_proc("tcp_allowed_congestion_control"),
+        "required_host_configuration": {
+            "modules": "sudo modprobe tcp_bbr   # reno and cubic are built in on Ubuntu",
+            "sysctl": "net.ipv4.tcp_allowed_congestion_control=reno cubic bbr",
+            "persist": "sudo ./host_setup.sh",
+            "docker_run": "docker run --network host ...",
+            "note": "The container uses the host Linux kernel. Select congestion control on the host, then start the container with --network host so it shares that network namespace.",
+        },
+    }
+    path = os.path.join(out_dir, "host_environment.json")
+    with open(path, "w") as f:
+        json.dump(info, f, indent=2)
+        f.write("\n")
+    print(
+        f"Host kernel {info['host_kernel']}"
+        f" (user space: {info['user_space_os'] or 'this machine'});"
+        f" available: {info['tcp_available_congestion_control']};"
+        f" allowed: {info['tcp_allowed_congestion_control']}"
+    )
+    print(f"Recorded host environment to {path}")
+    return info
+
 
 def runHW2Q1And2(serverList, n, max_attempts, test_time, interval, timeout_time, representative=None, out_dir=None):
     #each run writes to its own directory so repeated runs (e.g. per algorithm in Q3) don't overwrite each other
     out_dir = out_dir or os.path.join("results", time.strftime("run_%Y%m%d_%H%M%S"))
     os.makedirs(out_dir, exist_ok=True)
     print(f"Saving outputs to {out_dir}")
+    record_host_environment(out_dir)
 
     #part 1:
     results = connectN(serverList, n, max_attempts, test_time, interval, timeout_time, out_dir)

@@ -1,0 +1,12 @@
+.git
+.venv
+.testdeps
+__pycache__
+**/__pycache__
+*.pyc
+results
+*.pdf
+assignment-*.pdf
+.DS_Store
+q2_tcp_stats.csv
+q2_tcp_stats.json

@@ -8,8 +8,11 @@ if __name__ == "__main__":
     Example usage:
         python3 main.py servers.json
         python3 main.py servers.csv -n 10 --duration 60 --interval 0.2
-        python3 main.py servers.json --compare --algorithms cubic reno bbr --repetitions 3   (Q3)
+        python3 main.py listed_iperf3_servers.json --compare -n 5 --duration 30 --repetitions 3 --output-dir results/q3_final
         python3 main.py --replot results/q3_final --representative 170.83.216.19:5202     (Q3 plots from saved data)
+
+        docker run --rm --network host -v "$PWD/results:/app/results" cs422-hw2
+        docker run --rm --network host -v "$PWD/results:/app/results" cs422-hw2 --replot results/q3_final
     """
 
     #argument set up (copied from assignment 1)

@@ -9,6 +9,7 @@ Run through main.py:  python3 main.py servers.json --compare --algorithms cubic 
 * Each run is logged in run_log.csv; each (algorithm, repetition) gets the Q1/Q2 outputs in <algo>_rep<k>/
 * comparison/ holds q3_summary.csv and the PDFs comparing algorithms on one representative destination
 * --replot DIR rebuilds the comparison from a finished run's saved measurements (e.g. for another representative)
+* Runs where the client was frozen (e.g. the host slept) are cut at the freeze for the comparison only
 '''
 import csv
 import json
@@ -32,10 +33,11 @@ TCP_CONGESTION = 13  #Linux socket option number
 
 def runHW2Q3(serverList, n, max_attempts, test_time, interval, timeout_time, algorithms, repetitions,
              representative=None, out_dir=None):
-    check_algorithms(algorithms)
     out_dir = out_dir or os.path.join("results", time.strftime("q3_%Y%m%d_%H%M%S"))
     os.makedirs(out_dir, exist_ok=True)
     print(f"Saving outputs to {out_dir}")
+    sp.record_host_environment(out_dir)
+    check_algorithms(algorithms)
 
     #1. pick the destinations once (system default algorithm, short tests); failures go to selection/failures.csv
     selection_dir = os.path.join(out_dir, "selection")
@@ -123,6 +125,7 @@ def runHW2Q3(serverList, n, max_attempts, test_time, interval, timeout_time, alg
     #5. comparison across algorithms
     cmp_dir = os.path.join(out_dir, "comparison")
     os.makedirs(cmp_dir, exist_ok=True)
+    results = drop_frozen_samples(results, interval, cmp_dir)
     Q3_summary(results, algorithms, cmp_dir)
     Q3_plot(results, algorithms, repetitions, rep_dest, interval, cmp_dir)
     print(f"\nQ3 outputs saved to {out_dir} (run log: {log_path})")
@@ -158,8 +161,36 @@ def replotHW2Q3(run_dir, representative=None):
     print(f"Representative destination: {rep_dest}")
     cmp_dir = os.path.join(run_dir, "comparison_" + rep_dest.replace(":", "_"))
     os.makedirs(cmp_dir, exist_ok=True)
+    results = drop_frozen_samples(results, config["interval_s"], cmp_dir)
     Q3_summary(results, algorithms, cmp_dir)
     Q3_plot(results, algorithms, repetitions, rep_dest, config["interval_s"], cmp_dir)
+
+
+def drop_frozen_samples(results, interval, out_dir):
+    '''
+    A gap between samples far longer than the interval means the client was frozen (e.g. the host slept),
+    so the sample after it averages over the freeze. Each run is cut at its first such gap for the comparison;
+    the raw per-run CSV/JSON keep every sample. Cuts are listed in excluded_samples.csv.
+    '''
+    limit = max(5 * interval, 1.0)
+    cleaned, excluded = {}, []
+    for (algo, rep), runs in results.items():
+        cleaned[(algo, rep)] = []
+        for ip, port, output in runs:
+            records = output[1]
+            cut = next((i for i in range(1, len(records)) if records[i][0] - records[i - 1][0] > limit), len(records))
+            if cut < len(records):
+                excluded.append([algo, rep, f"{ip}:{port}", f"{records[cut - 1][0]:.3f}", f"{records[cut][0]:.3f}",
+                                 len(records) - cut])
+                print(f"Warning: {algo} rep {rep} {ip}:{port} paused from {records[cut - 1][0]:.1f} s to "
+                      f"{records[cut][0]:.1f} s; excluding the {len(records) - cut} sample(s) from then on")
+            cleaned[(algo, rep)].append((ip, port, (output[0], records[:cut], output[2])))
+
+    with open(os.path.join(out_dir, "excluded_samples.csv"), "w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(["algorithm", "repetition", "destination", "last_good_sample_s", "resumed_at_s", "samples_excluded"])
+        writer.writerows(excluded)
+    return cleaned
 
 
 def check_algorithms(algorithms):
@@ -173,8 +204,9 @@ def check_algorithms(algorithms):
                     f"error: cannot select '{algo}' on a socket ({e}).\n"
                     f"  available: {_read_proc('tcp_available_congestion_control')}\n"
                     f"  allowed:   {_read_proc('tcp_allowed_congestion_control')}\n"
-                    f"  On the host: sudo modprobe tcp_{algo}, then add it to net.ipv4.tcp_allowed_congestion_control\n"
-                    f"  (or run the container with --cap-add NET_ADMIN)")
+                    f"  On the Ubuntu host: sudo ./host_setup.sh\n"
+                    f"  Start the container with --network host so it uses that host kernel and network namespace.\n"
+                    f"  A private network namespace needs --cap-add NET_ADMIN, and the host must already have loaded tcp_{algo}.")
 
 
 def pick_representative(results, destinations, algorithms, representative):
