@@ -1,0 +1,17 @@
+{
+  "recorded_at": "2026-10-22 20:37:06",
+  "host_kernel": "6.8.0-147-generic",
+  "host_uname": "Linux cs422 6.8.0-147-generic #147-Ubuntu SMP PREEMPT_DYNAMIC Thu Sep 24 11:39:52 UTC 2026 aarch64 aarch64",
+  "user_space_os": "Ubuntu 24.04.5 LTS",
+  "python": "3.12.3",
+  "tcp_congestion_control": "cubic",
+  "tcp_available_congestion_control": "reno cubic bbr hybrid",
+  "tcp_allowed_congestion_control": "reno cubic bbr hybrid",
+  "required_host_configuration": {
+    "modules": "sudo modprobe tcp_bbr   # reno and cubic are built in on Ubuntu",
+    "sysctl": "net.ipv4.tcp_allowed_congestion_control=reno cubic bbr",
+    "persist": "sudo ./host_setup.sh",
+    "docker_run": "docker run --network host ...",
+    "note": "The container uses the host Linux kernel. Select congestion control on the host, then start the container with --network host so it shares that network namespace."
+  }
+}
