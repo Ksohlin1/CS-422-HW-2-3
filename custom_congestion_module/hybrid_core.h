@@ -89,7 +89,7 @@ static inline u32 hy_step(struct hybrid *h, u32 cwnd, u32 now,
     /* EWMA alpha = 1/8. */
     h->loss_ewma = (7 * h->loss_ewma + rate) / 8;
     congestive = (loss && queue > 50000) || h->loss_ewma > 20000;
-    h->high_delay_count = queue > 150000 ? h->high_delay_count + 1 : 0;
+    h->high_delay_count = queue > 300000 ? h->high_delay_count + 1 : 0;
     if (h->startup) {
         if (goodput * 100 >= h->best_goodput * 125) {
             h->best_goodput = goodput;
@@ -110,7 +110,9 @@ static inline u32 hy_step(struct hybrid *h, u32 cwnd, u32 now,
         h->high_delay_count = 0;
         h->startup = false;
         h->fraction = 0;
-    } else if (limited && queue < 50000 && stable) {
+    /* Grow under 20% delay, or under 5 ms when that is still below 30%. */
+    } else if (limited && stable && queue < 300000 &&
+               (queue < 200000 || rtt - h->min_rtt < 5000)) {
         if (h->startup) {
             cwnd += 200;
         } else {

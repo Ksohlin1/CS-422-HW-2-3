@@ -11,8 +11,8 @@ int main(void)
     cwnd = hy_step(&h, 10, 200000, 100000, 0, 100, 1000, true, false);
     assert(cwnd == 210);
     assert(hy_step(&h, cwnd, 400000, 100000, 0, 100, 1300, false, false) == cwnd);
-    assert(hy_step(&h, cwnd, 600000, 120000, 0, 100, 1300, true, false) == cwnd);
-    cwnd = hy_step(&h, cwnd, 800000, 120000, 0, 100, 1300, true, false);
+    assert(hy_step(&h, cwnd, 600000, 140000, 0, 100, 1300, true, false) == cwnd);
+    cwnd = hy_step(&h, cwnd, 800000, 140000, 0, 100, 1300, true, false);
     assert(cwnd == 189 && !h.startup);
     cwnd = hy_step(&h, cwnd, 1000000, 110000, 1, 1000, 1300, true, false);
     assert(cwnd == 132);
@@ -28,7 +28,7 @@ int main(void)
     hy_init(&h, 0);
     h.startup = false;
     h.min_rtt = 100000;
-    cwnd = hy_step(&h, 100, 10200000, 110000, 0, 100, 1000, true, false);
+    cwnd = hy_step(&h, 100, 10200000, 140000, 0, 100, 1000, true, false);
     assert(cwnd == 50 && h.saved_cwnd == 100);
     cwnd = hy_step(&h, cwnd, 10400000, 105000, 0, 100, 1000, false, false);
     assert(cwnd == 100 && h.saved_cwnd == 0 && h.min_rtt == 105000);
